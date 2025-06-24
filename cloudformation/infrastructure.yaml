@@ -1,0 +1,904 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Sketch to Video POC Demo Infrastructure'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: sketch-video-poc
+    Description: Name of the project
+
+Resources:
+  # S3 Bucket for storing uploaded images and generated videos
+  # IMPORTANT: NO PUBLIC ACCESS ALLOWED
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-media-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+              - DELETE
+            AllowedOrigins:
+              - '*'
+            MaxAge: 3000
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 7
+
+  # S3 Bucket for CloudFront static website
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-website-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # CloudFront Origin Access Control
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${ProjectName}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt WebsiteBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !Ref OriginAccessControl
+        Enabled: true
+        DefaultRootObject: index.html
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        PriceClass: PriceClass_100
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  # S3 Bucket Policy for CloudFront
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub 'arn:aws:s3:::${WebsiteBucket}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+  # IAM Role for Lambda functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:GetObjectPresignedUrl
+                Resource: 
+                  - !Sub 'arn:aws:s3:::${MediaBucket}/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: 
+                  - !GetAtt MediaBucket.Arn
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:StartAsyncInvoke
+                  - bedrock:GetAsyncInvoke
+                Resource: '*'
+
+  # API Gateway
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ProjectName}-api'
+      Description: 'API for Sketch to Video POC'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway CORS Options Method
+  ApiGatewayOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !GetAtt ApiGateway.RootResourceId
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # Upload Resource
+  UploadResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: upload
+
+  # Upload Lambda Function
+  UploadLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-upload'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref MediaBucket
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import uuid
+          import os
+          from urllib.parse import unquote_plus
+          
+          s3 = boto3.client('s3')
+          
+          def lambda_handler(event, context):
+              try:
+                  print(f"Received event: {json.dumps(event)}")
+                  
+                  bucket_name = os.environ['BUCKET_NAME']
+                  
+                  # Parse request body to get file type if provided
+                  body = {}
+                  if event.get('body'):
+                      try:
+                          body = json.loads(event['body'])
+                      except:
+                          pass
+                  
+                  file_type = body.get('fileType', 'image/jpeg')
+                  file_extension = 'jpg'
+                  
+                  # Determine file extension based on content type
+                  if 'png' in file_type.lower():
+                      file_extension = 'png'
+                  elif 'jpeg' in file_type.lower() or 'jpg' in file_type.lower():
+                      file_extension = 'jpg'
+                  
+                  # Generate presigned POST for upload
+                  key = f"uploads/{uuid.uuid4()}.{file_extension}"
+                  
+                  print(f"Generating presigned POST for key: {key}, content-type: {file_type}")
+                  
+                  # Create presigned POST with fields
+                  presigned_post = s3.generate_presigned_post(
+                      Bucket=bucket_name,
+                      Key=key,
+                      Fields={"Content-Type": file_type},
+                      Conditions=[
+                          {"Content-Type": file_type},
+                          ["content-length-range", 1, 10485760]  # 1 byte to 10MB
+                      ],
+                      ExpiresIn=3600
+                  )
+                  
+                  print(f"Generated presigned POST successfully")
+                  
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*',
+                          'Access-Control-Allow-Headers': 'Content-Type',
+                          'Access-Control-Allow-Methods': 'POST, OPTIONS'
+                      },
+                      'body': json.dumps({
+                          'url': presigned_post['url'],
+                          'fields': presigned_post['fields'],
+                          'key': key
+                      })
+                  }
+              except Exception as e:
+                  print(f"Error in upload lambda: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({'error': str(e)})
+                  }
+
+  # Upload Method
+  UploadMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref UploadResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UploadLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # Upload Options Method
+  UploadOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref UploadResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # Analyze Resource
+  AnalyzeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: analyze
+
+  # Analyze Lambda Function
+  AnalyzeLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-analyze'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref MediaBucket
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import base64
+          import os
+          
+          s3 = boto3.client('s3')
+          bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
+          
+          def lambda_handler(event, context):
+              try:
+                  print(f"Received event: {json.dumps(event)}")
+                  
+                  body = json.loads(event['body'])
+                  key = body['key']
+                  user_text = body.get('userText', '')
+                  
+                  print(f"Processing key: {key}, user_text: {user_text}")
+                  
+                  bucket_name = os.environ['BUCKET_NAME']
+                  
+                  # Get image from S3
+                  try:
+                      response = s3.get_object(Bucket=bucket_name, Key=key)
+                      image_data = response['Body'].read()
+                      image_base64 = base64.b64encode(image_data).decode('utf-8')
+                      print(f"Successfully retrieved image from S3, size: {len(image_data)} bytes")
+                  except Exception as e:
+                      print(f"Error retrieving image from S3: {str(e)}")
+                      raise e
+                  
+                  # Analyze image with Claude
+                  prompt = "Analyze this image in detail. Please describe: 1. Main objects or people in the image 2. Background and environment 3. Colors and style 4. Overall mood or feeling 5. Features that can be used for video production. Please provide a detailed analysis in English."
+                  
+                  message = {
+                      "messages": [
+                          {
+                              "role": "user",
+                              "content": [
+                                  {
+                                      "image": {
+                                          "format": "jpeg",
+                                          "source": {
+                                              "bytes": image_base64
+                                          }
+                                      }
+                                  },
+                                  {
+                                      "text": prompt
+                                  }
+                              ]
+                          }
+                      ],
+                      "inferenceConfig": {
+                          "max_new_tokens": 1000
+                      }
+                  }
+                  
+                  print("Calling Nova Pro API...")
+                  try:
+                      response = bedrock.invoke_model(
+                          modelId='amazon.nova-pro-v1:0',
+                          body=json.dumps(message)
+                      )
+                      
+                      result = json.loads(response['body'].read())
+                      analysis = result['output']['message']['content'][0]['text']
+                      print(f"Nova Pro analysis completed, length: {len(analysis)}")
+                  except Exception as e:
+                      print(f"Error calling Nova Pro API: {str(e)}")
+                      raise e
+                  
+                  # Generate video prompt
+                  video_prompt = generate_video_prompt(analysis, user_text)
+                  print(f"Generated video prompt, length: {len(video_prompt)}")
+                  
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*',
+                          'Access-Control-Allow-Headers': 'Content-Type',
+                          'Access-Control-Allow-Methods': 'POST, OPTIONS'
+                      },
+                      'body': json.dumps({
+                          'analysis': analysis,
+                          'videoPrompt': video_prompt
+                      })
+                  }
+              except Exception as e:
+                  print(f"Error in lambda_handler: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({'error': str(e)})
+                  }
+          
+          def generate_video_prompt(analysis, user_text):
+              """
+              Nova Pro를 사용해서 영상 생성 프롬프트를 생성하는 함수 (Nova Reel 1.1용 30초 영상)
+              """
+              # Nova Pro에게 보낼 개선된 프롬프트 구성
+              nova_prompt = f"""Based on this image analysis: "{analysis}"
+          And user request: "{user_text}"
+
+          Create a detailed 30-second video prompt for Amazon Nova Reel 1.1 MULTI_SHOT_AUTOMATED mode.
+
+          Focus on the SPECIFIC content from the image and user request. Don't just list technical requirements.
+
+          Create a vivid, detailed description that includes:
+
+          1. SPECIFIC SCENES based on the image content and user request
+          2. Detailed camera movements that enhance the story
+          3. Lighting that matches the mood and setting
+          4. Colors and visual style appropriate for the content
+          5. Environmental details that bring the scene to life
+          6. Smooth transitions between different shots
+          7. Professional cinematic quality (8K, 24fps)
+
+          Write a comprehensive video prompt that tells a complete visual story. Be specific about what happens in each scene, how the camera moves, what the lighting looks like, and how it all connects together.
+
+          Write in English and focus on creating engaging, specific visual content rather than just listing technical terms."""
+
+              # Nova Pro API 호출을 위한 메시지 구성
+              message = {
+                  "messages": [
+                      {
+                          "role": "user",
+                          "content": [
+                              {
+                                  "text": nova_prompt
+                              }
+                          ]
+                      }
+                  ],
+                  "inferenceConfig": {
+                      "max_new_tokens": 2500
+                  }
+              }
+              
+              print("Calling Nova Pro API for video prompt generation...")
+              response = bedrock.invoke_model(
+                  modelId='amazon.nova-pro-v1:0',
+                  body=json.dumps(message)
+              )
+              
+              result = json.loads(response['body'].read())
+              generated_prompt = result['output']['message']['content'][0]['text'].strip()
+              
+              print(f"Nova Pro generated prompt length: {len(generated_prompt)}")
+              
+              # 최대 길이 제한만 유지
+              if len(generated_prompt) > 3500:
+                  generated_prompt = generated_prompt[:3497] + "..."
+                  print(f"Trimmed prompt to: {len(generated_prompt)} characters")
+              
+              print(f"Final prompt length: {len(generated_prompt)}")
+              return generated_prompt
+
+  # Analyze Method
+  AnalyzeMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AnalyzeResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AnalyzeLambda.Arn}/invocations'
+
+  # Analyze Options Method
+  AnalyzeOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AnalyzeResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # Generate Video Resource
+  GenerateVideoResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: generate-video
+
+  # Generate Video Lambda Function
+  GenerateVideoLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-generate-video'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref MediaBucket
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import random
+          import time
+          import os
+          
+          bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
+          
+          def lambda_handler(event, context):
+              try:
+                  print(f"Received event: {json.dumps(event)}")
+                  
+                  body = json.loads(event['body'])
+                  print(f"Parsed body: {json.dumps(body)}")
+                  
+                  prompt = body['prompt']
+                  print(f"Prompt: {prompt}")
+                  
+                  bucket_name = os.environ['BUCKET_NAME']
+                  print(f"Bucket name: {bucket_name}")
+                  
+                  output_s3_uri = f"s3://{bucket_name}/videos/"
+                  print(f"Output S3 URI: {output_s3_uri}")
+                  
+                  # Start video generation job
+                  print("Starting video generation job...")
+                  invocation_arn = start_text_to_video_generation_job(bedrock, prompt, output_s3_uri)
+                  print(f"Job started with invocation ARN: {invocation_arn}")
+                  
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*',
+                          'Access-Control-Allow-Headers': 'Content-Type',
+                          'Access-Control-Allow-Methods': 'POST, OPTIONS'
+                      },
+                      'body': json.dumps({
+                          'jobId': invocation_arn,
+                          'status': 'started'
+                      })
+                  }
+              except Exception as e:
+                  print(f"Error in lambda_handler: {str(e)}")
+                  print(f"Error type: {type(e).__name__}")
+                  import traceback
+                  print(f"Traceback: {traceback.format_exc()}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({'error': str(e)})
+                  }
+          
+          def start_text_to_video_generation_job(bedrock_runtime, prompt, output_s3_uri):
+              try:
+                  print("Entering start_text_to_video_generation_job function")
+                  model_id = "amazon.nova-reel-v1:1"
+                  seed = random.randint(0, 2147483646)
+                  print(f"Model ID: {model_id}, Seed: {seed}")
+                  
+                  model_input = {
+                      "taskType": "MULTI_SHOT_AUTOMATED",
+                      "multiShotAutomatedParams": {"text": prompt},
+                      "videoGenerationConfig": {
+                          "fps": 24,
+                          "durationSeconds": 30,
+                          "dimension": "1280x720",
+                          "seed": seed,
+                      },
+                  }
+                  print(f"Model input: {json.dumps(model_input)}")
+                  
+                  output_config = {"s3OutputDataConfig": {"s3Uri": output_s3_uri}}
+                  print(f"Output config: {json.dumps(output_config)}")
+                  
+                  print("Calling bedrock_runtime.start_async_invoke...")
+                  response = bedrock_runtime.start_async_invoke(
+                      modelId=model_id, modelInput=model_input, outputDataConfig=output_config
+                  )
+                  print(f"Bedrock response: {json.dumps(response)}")
+                  
+                  return response["invocationArn"]
+              except Exception as e:
+                  print(f"Error in start_text_to_video_generation_job: {str(e)}")
+                  print(f"Error type: {type(e).__name__}")
+                  import traceback
+                  print(f"Traceback: {traceback.format_exc()}")
+                  raise e
+
+  # Generate Video Method
+  GenerateVideoMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref GenerateVideoResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GenerateVideoLambda.Arn}/invocations'
+
+  # Generate Video Options Method
+  GenerateVideoOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref GenerateVideoResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # Check Status Resource
+  CheckStatusResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: check-status
+
+  # Check Status Lambda Function
+  CheckStatusLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-check-status'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref MediaBucket
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          
+          bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
+          s3 = boto3.client('s3')
+          
+          def lambda_handler(event, context):
+              try:
+                  body = json.loads(event['body'])
+                  job_id = body['jobId']
+                  
+                  bucket_name = os.environ['BUCKET_NAME']
+                  
+                  # Check job status
+                  job = bedrock.get_async_invoke(invocationArn=job_id)
+                  status = job['status']
+                  
+                  response_data = {
+                      'status': status
+                  }
+                  
+                  if status == 'Completed':
+                      bucket_uri = job['outputDataConfig']['s3OutputDataConfig']['s3Uri']
+                      
+                      # Parse the actual video key from bucket URI
+                      # bucket_uri format: s3://bucket-name/path/to/video/
+                      # We need to extract the path part and add output.mp4
+                      bucket_path = bucket_uri.replace(f"s3://{bucket_name}/", "")
+                      # Ensure bucket_path ends with / before adding output.mp4
+                      if not bucket_path.endswith('/'):
+                          bucket_path += '/'
+                      video_key = f"{bucket_path}output.mp4"
+                      
+                      # Generate presigned URL for video access
+                      presigned_url = s3.generate_presigned_url(
+                          'get_object',
+                          Params={'Bucket': bucket_name, 'Key': video_key},
+                          ExpiresIn=3600
+                      )
+                      
+                      response_data['videoUrl'] = presigned_url
+                      response_data['videoPath'] = f"{bucket_uri}output.mp4"
+                  elif status == 'Failed':
+                      response_data['error'] = job.get('failureMessage', 'Unknown error')
+                  
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*',
+                          'Access-Control-Allow-Headers': 'Content-Type',
+                          'Access-Control-Allow-Methods': 'POST, OPTIONS'
+                      },
+                      'body': json.dumps(response_data)
+                  }
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({'error': str(e)})
+                  }
+
+  # Check Status Method
+  CheckStatusMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref CheckStatusResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CheckStatusLambda.Arn}/invocations'
+
+  # Check Status Options Method
+  CheckStatusOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref CheckStatusResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  # Lambda Permissions
+  UploadLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UploadLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  AnalyzeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AnalyzeLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  GenerateVideoLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GenerateVideoLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  CheckStatusLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CheckStatusLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  # API Gateway Deployment
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - UploadMethod
+      - UploadOptionsMethod
+      - AnalyzeMethod
+      - AnalyzeOptionsMethod
+      - GenerateVideoMethod
+      - GenerateVideoOptionsMethod
+      - CheckStatusMethod
+      - CheckStatusOptionsMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+
+Outputs:
+  ApiGatewayUrl:
+    Description: 'API Gateway URL'
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${ProjectName}-api-url'
+
+  CloudFrontUrl:
+    Description: 'CloudFront Distribution URL'
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+    Export:
+      Name: !Sub '${ProjectName}-cloudfront-url'
+
+  MediaBucketName:
+    Description: 'S3 Media Bucket Name'
+    Value: !Ref MediaBucket
+    Export:
+      Name: !Sub '${ProjectName}-media-bucket'
+
+  WebsiteBucketName:
+    Description: 'S3 Website Bucket Name'
+    Value: !Ref WebsiteBucket
+    Export:
+      Name: !Sub '${ProjectName}-website-bucket'

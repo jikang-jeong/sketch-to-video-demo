@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Video Studio - Sketch to Video</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            font-weight: 300;
+        }
+
+        .main-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .upload-section {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 2px dashed #cbd5e0;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-section:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.15);
+        }
+
+        .upload-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+            transition: left 0.5s;
+        }
+
+        .upload-section:hover::before {
+            left: 100%;
+        }
+
+        .input-group {
+            margin-bottom: 25px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #4a5568;
+            font-size: 1rem;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .file-input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        .file-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            resize: vertical;
+            font-family: inherit;
+            font-size: 1rem;
+            min-height: 100px;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            min-width: 200px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+        }
+
+        .btn-secondary:hover {
+            box-shadow: 0 10px 25px rgba(72, 187, 120, 0.3);
+        }
+
+        .result-section {
+            margin-top: 30px;
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            border: 1px solid #e2e8f0;
+        }
+
+        .result-section h3 {
+            color: #2d3748;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            padding: 30px;
+            color: #667eea;
+            font-weight: 500;
+            font-size: 1.1rem;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e2e8f0;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e2e8f0;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 15px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            border-radius: 3px;
+            animation: progress 2s ease-in-out infinite;
+        }
+
+        @keyframes progress {
+            0% { width: 0%; }
+            50% { width: 70%; }
+            100% { width: 100%; }
+        }
+
+        .pulse {
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .success {
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(72, 187, 120, 0.3);
+        }
+
+        .error {
+            background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(245, 101, 101, 0.3);
+        }
+
+        .image-preview {
+            max-width: 100%;
+            max-height: 400px;
+            margin: 20px 0;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .image-preview:hover {
+            transform: scale(1.02);
+        }
+
+        .prompt-display {
+            background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
+            padding: 25px;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+            margin: 20px 0;
+            white-space: pre-wrap;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            max-height: 400px;
+            overflow-y: auto;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .prompt-display::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .prompt-display::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        .prompt-display::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 4px;
+        }
+
+        video {
+            width: 100%;
+            max-width: 800px;
+            margin: 20px 0;
+            border-radius: 12px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+        }
+
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .icon {
+            font-size: 1.5rem;
+        }
+
+        .download-btn {
+            background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
+            margin-top: 15px;
+        }
+
+        .download-btn:hover {
+            box-shadow: 0 10px 25px rgba(237, 137, 54, 0.3);
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin: 10px 0;
+        }
+
+        .status-processing {
+            background: rgba(102, 126, 234, 0.1);
+            color: #667eea;
+            border: 1px solid rgba(102, 126, 234, 0.2);
+        }
+
+        .status-completed {
+            background: rgba(72, 187, 120, 0.1);
+            color: #38a169;
+            border: 1px solid rgba(72, 187, 120, 0.2);
+        }
+
+        .status-failed {
+            background: rgba(245, 101, 101, 0.1);
+            color: #e53e3e;
+            border: 1px solid rgba(245, 101, 101, 0.2);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .main-card {
+                padding: 25px;
+            }
+            
+            .upload-section {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 AI Video Studio</h1>
+            <p>Transform your sketches into cinematic videos with AI</p>
+        </div>
+        
+        <div class="main-card">
+            <div class="upload-section">
+                <div class="input-group">
+                    <label for="imageFile">
+                        <span class="icon">🖼️</span>
+                        Upload Sketch Image
+                    </label>
+                    <input type="file" id="imageFile" accept="image/*" required class="file-input">
+                </div>
+                
+                <div class="input-group">
+                    <label for="videoDescription">
+                        <span class="icon">📝</span>
+                        Video Description
+                    </label>
+                    <textarea id="videoDescription" rows="3" placeholder="Describe what you want to see in your video..."></textarea>
+                </div>
+                
+                <button onclick="analyzeImage()" id="analyzeBtn" class="btn">
+                    <span class="icon">🔍</span>
+                    Analyze & Generate Prompt
+                </button>
+            </div>
+
+            <div id="results" class="result-section" style="display: none;">
+                <h3>
+                    <span class="icon">📋</span>
+                    Results
+                </h3>
+                <div id="analysisResult"></div>
+                <div id="promptResult"></div>
+                <button onclick="generateVideo()" id="generateBtn" style="display: none;" class="btn btn-secondary">
+                    <span class="icon">🎥</span>
+                    Generate 30-Second Video
+                </button>
+                <div id="videoResult"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'https://ywmqwnp492.execute-api.us-east-1.amazonaws.com/prod';
+        let currentImageKey = null;
+        let currentPrompt = null;
+
+        async function analyzeImage() {
+            const fileInput = document.getElementById('imageFile');
+            const videoDescription = document.getElementById('videoDescription').value;
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            const resultsDiv = document.getElementById('results');
+            const analysisResult = document.getElementById('analysisResult');
+            const promptResult = document.getElementById('promptResult');
+
+            if (!fileInput.files[0]) {
+                alert('Please select an image file first.');
+                return;
+            }
+
+            analyzeBtn.disabled = true;
+            analyzeBtn.innerHTML = '<div class="spinner"></div> Processing...';
+            resultsDiv.style.display = 'block';
+            analysisResult.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div>
+                        <div>Uploading image...</div>
+                        <div class="progress-bar"><div class="progress-fill"></div></div>
+                    </div>
+                </div>
+            `;
+
+            try {
+                // Step 1: Upload image
+                const file = fileInput.files[0];
+                const uploadResponse = await fetch(`${API_BASE_URL}/upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        fileName: file.name,
+                        fileType: file.type
+                    })
+                });
+
+                if (!uploadResponse.ok) {
+                    throw new Error(`Upload failed: ${uploadResponse.status}`);
+                }
+
+                const uploadData = await uploadResponse.json();
+                currentImageKey = uploadData.key;
+
+                // Upload file to S3
+                const formData = new FormData();
+                Object.keys(uploadData.fields).forEach(key => {
+                    formData.append(key, uploadData.fields[key]);
+                });
+                formData.append('file', file);
+
+                const s3Response = await fetch(uploadData.url, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!s3Response.ok) {
+                    throw new Error(`S3 upload failed: ${s3Response.status}`);
+                }
+
+                analysisResult.innerHTML = `
+                    <div class="loading pulse">
+                        <div class="spinner"></div>
+                        <div>
+                            <div>Analyzing image with AI...</div>
+                            <div class="progress-bar"><div class="progress-fill"></div></div>
+                        </div>
+                    </div>
+                `;
+
+                // Step 2: Analyze image
+                const analyzeResponse = await fetch(`${API_BASE_URL}/analyze`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        key: currentImageKey,
+                        userText: videoDescription
+                    })
+                });
+
+                console.log('Analyze response status:', analyzeResponse.status);
+                
+                if (!analyzeResponse.ok) {
+                    const errorText = await analyzeResponse.text();
+                    console.log('Analyze error response:', errorText);
+                    throw new Error(`Analysis failed (${analyzeResponse.status}): ${errorText}`);
+                }
+
+                const analyzeData = await analyzeResponse.json();
+                currentPrompt = analyzeData.videoPrompt;
+
+                // Display results
+                analysisResult.innerHTML = `
+                    <div class="success">✅ Analysis completed successfully!</div>
+                    <img src="${URL.createObjectURL(file)}" alt="Uploaded image" class="image-preview">
+                    <div class="section-title">
+                        <span class="icon">🎭</span>
+                        Image Analysis
+                    </div>
+                    <div class="prompt-display">${analyzeData.analysis}</div>
+                `;
+
+                promptResult.innerHTML = `
+                    <div class="section-title">
+                        <span class="icon">🎬</span>
+                        Generated Video Prompt
+                    </div>
+                    <div class="prompt-display">${analyzeData.videoPrompt}</div>
+                `;
+
+                document.getElementById('generateBtn').style.display = 'inline-flex';
+
+            } catch (error) {
+                console.error('Analyze error:', error);
+                analysisResult.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            } finally {
+                analyzeBtn.disabled = false;
+                analyzeBtn.innerHTML = '<span class="icon">🔍</span> Analyze & Generate Prompt';
+            }
+        }
+
+        async function generateVideo() {
+            const generateBtn = document.getElementById('generateBtn');
+            const videoResult = document.getElementById('videoResult');
+
+            if (!currentImageKey || !currentPrompt) {
+                alert('Please analyze an image first.');
+                return;
+            }
+
+            generateBtn.disabled = true;
+            generateBtn.innerHTML = '<div class="spinner"></div> Generating...';
+            videoResult.innerHTML = `
+                <div class="loading pulse">
+                    <div class="spinner"></div>
+                    <div>
+                        <div>Creating your 30-second video...</div>
+                        <div class="status-indicator status-processing">
+                            <div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                            This may take several minutes
+                        </div>
+                        <div class="progress-bar"><div class="progress-fill"></div></div>
+                    </div>
+                </div>
+            `;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/generate-video`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        imageKey: currentImageKey,
+                        prompt: currentPrompt
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Video generation failed (${response.status}): ${errorText}`);
+                }
+
+                const data = await response.json();
+                
+                // Poll for completion
+                await pollVideoStatus(data.jobId);
+
+            } catch (error) {
+                console.error('Generate video error:', error);
+                videoResult.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+                generateBtn.disabled = false;
+                generateBtn.innerHTML = '<span class="icon">🎥</span> Generate 30-Second Video';
+            }
+        }
+
+        async function pollVideoStatus(jobId) {
+            const videoResult = document.getElementById('videoResult');
+            const generateBtn = document.getElementById('generateBtn');
+            
+            const pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/check-status`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ jobId })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Status check failed: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (data.status === 'COMPLETED' || data.status === 'Completed') {
+                        clearInterval(pollInterval);
+                        videoResult.innerHTML = `
+                            <div class="success">✅ Video generated successfully!</div>
+                            <div class="status-indicator status-completed">
+                                ✅ Completed
+                            </div>
+                            <video controls>
+                                <source src="${data.videoUrl}" type="video/mp4">
+                                Your browser does not support the video tag.
+                            </video>
+                            <br>
+                            <a href="${data.videoUrl}" download="generated-video.mp4">
+                                <button class="btn download-btn">
+                                    <span class="icon">📥</span>
+                                    Download Video
+                                </button>
+                            </a>
+                        `;
+                        generateBtn.disabled = false;
+                        generateBtn.innerHTML = '<span class="icon">🎥</span> Generate 30-Second Video';
+                    } else if (data.status === 'FAILED' || data.status === 'Failed') {
+                        clearInterval(pollInterval);
+                        videoResult.innerHTML = `
+                            <div class="error">❌ Video generation failed: ${data.error || 'Unknown error'}</div>
+                            <div class="status-indicator status-failed">
+                                ❌ Failed
+                            </div>
+                        `;
+                        generateBtn.disabled = false;
+                        generateBtn.innerHTML = '<span class="icon">🎥</span> Generate 30-Second Video';
+                    } else {
+                        // Still processing
+                        const estimatedTime = data.estimatedTime || data.estimatedMinutes;
+                        const timeInfo = estimatedTime ? `<div style="margin-top: 8px; font-size: 0.9rem; opacity: 0.8;">⏱️ Estimated time: ${estimatedTime} minutes</div>` : '';
+                        
+                        videoResult.innerHTML = `
+                            <div class="loading pulse">
+                                <div class="spinner"></div>
+                                <div>
+                                    <div>Video generation in progress...</div>
+                                    <div class="status-indicator status-processing">
+                                        <div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                                        Status: ${data.status}
+                                    </div>
+                                    ${timeInfo}
+                                    <div class="progress-bar"><div class="progress-fill"></div></div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                } catch (error) {
+                    console.error('Status check error:', error);
+                    clearInterval(pollInterval);
+                    videoResult.innerHTML = `<div class="error">❌ Error checking status: ${error.message}</div>`;
+                    generateBtn.disabled = false;
+                    generateBtn.innerHTML = '<span class="icon">🎥</span> Generate 30-Second Video';
+                }
+            }, 5000); // Check every 5 seconds
+        }
+    </script>
+</body>
+</html>
