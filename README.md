@@ -68,7 +68,7 @@ cd sketch-video-poc
 ```
 ### 4. apigateway url & redeploy ###
 index.html => const API_BASE_URL 생성된 api gateway url로 대치해서 재배포필요 
-
+https://github.com/jikang-jeong/sketch-to-video-demo/blob/b482862aa6a6a4d5f8032d2ef8af0025d4077842/frontend/index.html#L445
 ## 🧪 사용 방법 
 1. **웹사이트 접속**: 배포 완료 후 제공된 CloudFront URL로 접속
 2. **이미지 업로드**: JPEG 또는 PNG 파일 업로드 (최대 10MB)
