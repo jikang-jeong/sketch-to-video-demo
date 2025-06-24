@@ -66,9 +66,10 @@ cd sketch-video-poc
 ```
 🌐 Access your application at: https://d1234567890.cloudfront.net
 ```
+### 4. apigateway url & redeploy ###
+index.html => const API_BASE_URL 생성된 api gateway url로 대치해서 재배포필요 
 
-## 🧪 사용 방법
-
+## 🧪 사용 방법 
 1. **웹사이트 접속**: 배포 완료 후 제공된 CloudFront URL로 접속
 2. **이미지 업로드**: JPEG 또는 PNG 파일 업로드 (최대 10MB)
 3. **설명 입력**: 원하는 영상의 시놉시스, 배경, 스타일 등을 입력
